@@ -84,9 +84,7 @@ ipython_config.py
 celerybeat-schedule
 
 # SageMath parsed files
-*.sage.py
-
-# Environments
+*.sage.py# Environments
 .env
 .venv
 env/
@@ -111,4 +109,8 @@ venv.bak/
 dmypy.json
 
 # Pyre type checker
-.pyre/
+.pyre/ 
+# My
+mainApp/config/* 
+
+*.jpg
