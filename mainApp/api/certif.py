@@ -7,11 +7,13 @@ from urllib.parse import urlencode
 import requests
 from flask import Blueprint, jsonify, request, abort, current_app
 from lxml import etree
+from requests import RequestException
 
 from app import OS_PATH
 from mainApp.api.IDENTITY import BENKE, MASTER
 from mainApp.api.URL import benke_certif_url, benke_name_schoolNum_url, benke_sex_url, benke_get_url, master_certif_url, \
     master_sex_name_url, master_main_url, master_code_url, benke_get_pic_url
+from mainApp.libs.ctx_man import catch_error
 from mainApp.libs.redis_conn import cookie_redis
 from mainApp.models.Success import Success
 from mainApp.models.base import db
@@ -41,6 +43,8 @@ def rename_code(pic_name,user_id):
             save_loop=False
         except Exception as e:
             count+=1
+            if count>=50:
+                return False
     return True
 
 
@@ -48,7 +52,7 @@ def rename_code(pic_name,user_id):
 #本科生认证
 def benke_certif(req_arg):
     cookie_dict = cookie_redis.get(str(req_arg['user_id']))
-    if cookie_dict is None:return None
+    if cookie_dict is None:raise TimeoutError
     my_cookies = json.loads(cookie_dict.decode('utf-8'))
 
     s = requests.session()
@@ -62,7 +66,9 @@ def benke_certif(req_arg):
 
 
     html = s.post(benke_certif_url, data=info, cookies=my_cookies)
-    #认证完成，以下开始获取相关信息
+    #认证完成，以下开始获取相关信息 502网址不对
+    if html.status_code!=200:#todo 暂时是网址不对,账号正确错误都会返回200
+        raise RequestException(response=html)
 
     name_and_schoolNum_html = s.get(benke_name_schoolNum_url, cookies=my_cookies)
     sex_html = s.get(benke_sex_url, cookies=my_cookies)
@@ -112,7 +118,6 @@ def benke_certif(req_arg):
                 'error': 'fail to get sex and name'
             }
     except Exception as e:
-        print(e)
         result_dict=benke_get(req_arg)
         result_dict['status']=0
         # 认证失败逻辑需要再写一下,再次去获取验证码
@@ -150,7 +155,7 @@ def benke_get(req_arg):
 def master_certif(req_arg):
     cookie_dict = cookie_redis.get(str(req_arg['user_id']))
     if not cookie_dict:
-        return None#过期
+        raise TimeoutError
     cookie_dict = json.loads(cookie_dict)
     my_cookie = cookie_dict.get('JSESSIONID')
     my_cookies = {
@@ -183,39 +188,33 @@ def master_certif(req_arg):
     renzheng = requests.post(master_certif_url,data=new_info,
                             headers=header, cookies=my_cookies)
     name_html = requests.get(master_sex_name_url, cookies=my_cookies)
-    try:
         # sex_xpath = '//html/body/form/div[2]/table[@class="tbline"]/tr[2]/td[2]//text()'
         # name_xpath = '//html/body/form/div[2]/table[@class="tbline"]/tr[1]/td[4]//text()'
         #
         # tree = etree.HTML(name_html.text)
-        re_name = re.compile('姓名\s*</td>\s*<td.*?>\s*(\S*)\s*</td>')
-        re_sex = re.compile('性别\s*</td>\s*<td.*?>\s*(\S*)\s*</td>')
-        # re_schoolNumb = re.compile("学号\s*</td>\s*<td.*?>\s*(\S*)\s*?</td>")
+    re_name = re.compile('姓名\s*</td>\s*<td.*?>\s*(\S*)\s*</td>')
+    re_sex = re.compile('性别\s*</td>\s*<td.*?>\s*(\S*)\s*</td>')
+    # re_schoolNumb = re.compile("学号\s*</td>\s*<td.*?>\s*(\S*)\s*?</td>")
 
-        name_fin = re.findall(re_name, name_html.text)[0].strip()
-        sex_fin = re.findall(re_sex, name_html.text)[0].strip()
+    name_fin = re.findall(re_name, name_html.text)[0].strip()
+    sex_fin = re.findall(re_sex, name_html.text)[0].strip()
 
-        result_dict = {
-            'user_id': req_arg['user_id'],
-            'status': 1,
-            'name': name_fin,
-            'school_numb': req_arg['account'],
-            'sex': sex_fin,
-            'identity': 2
-        }
-        with db.auto_commit():
-            success = Success()
-            success.userId = int(req_arg['user_id'])
-            success.info = 'user_id:'+req_arg['user_id']+","+\
-            'name:'+name_fin+','+'school_numb:' + \
-            req_arg['account']+','+'sex:'+sex_fin+','+'identity:2'
-        # 重命名用户认证用的二维码
-        rename_code(req_arg['verification_code'], req_arg['user_id'])
-
-    except Exception as e:
-        #获取姓名出错逻辑
-        result_dict = master_get(req_arg)
-        result_dict['status'] = 0
+    result_dict = {
+        'user_id': req_arg['user_id'],
+        'status': 1,
+        'name': name_fin,
+        'school_numb': req_arg['account'],
+        'sex': sex_fin,
+        'identity': 2
+    }
+    with db.auto_commit():
+        success = Success()
+        success.userId = int(req_arg['user_id'])
+        success.info = 'user_id:'+req_arg['user_id']+","+\
+        'name:'+name_fin+','+'school_numb:' + \
+        req_arg['account']+','+'sex:'+sex_fin+','+'identity:2'
+    # 重命名用户认证用的二维码
+    rename_code(req_arg['verification_code'], req_arg['user_id'])
 
     return result_dict
 
@@ -275,7 +274,7 @@ def master_get(req_arg):
     else:
         result_dict = {
             'user_id': req_arg['user_id'],
-            'error': 'file_save_error'
+            'status': 2
         }
     return result_dict
 
@@ -296,10 +295,13 @@ def certif():
     req_args = request.form
     req_args = req_args.to_dict()
     req_args['user_id'] = str(req_args['user_id'])#防止传int
+    certif_res = {}
     if int(req_args.get('identity',1)) == BENKE:
-        certif_res = benke_certif(req_args)
+        with catch_error(certif_res):
+            certif_res = {**certif_res,**benke_certif(req_args)}
     elif int(req_args.get('identity'))==MASTER:
-        certif_res = master_certif(req_args)
+        with catch_error(certif_res):
+            certif_res = {**master_certif(req_args),**certif_res}
     else:
         abort(400)
     return jsonify(certif_res)
@@ -312,11 +314,16 @@ def get():
 
     req_args['user_id'] = str(req_args['user_id'])  # 防止传int
 
+    result_dict = {}
     if int(req_args.get('identity',1)) == BENKE:
-        result_dict=benke_get(req_args)
+        with catch_error(result_dict):
+            result_dict={**benke_get(req_args),**result_dict}
     elif int(req_args.get('identity'))==MASTER:
-        result_dict=master_get(req_args)
+        with catch_error(result_dict):
+            result_dict = {**master_get(req_args),**result_dict}
     else:
         abort(400)
     return jsonify(result_dict)
+
+
 

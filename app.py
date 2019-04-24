@@ -21,5 +21,9 @@ def get_portrait(school,filename):
     # print("get img")
     return send_from_directory(OS_PATH+'/static/'+school,filename)
 
+@app.route('/alive',methods=['GET'])
+def alive():
+    return 'ok'
+
 if __name__ == '__main__':
     app.run()
