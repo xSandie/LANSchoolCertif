@@ -86,40 +86,41 @@ def benke_certif(req_arg):
     get_img(save_portrait_uri,my_cookies,portrait_url)
 
     # 提取具体数据
-    try:
-        name_and_schoolNum = list(name_and_schoolNum[0])
-        sex = sex[0]
+    # try:
+    name_and_schoolNum = list(name_and_schoolNum[0])
+    sex = sex[0]
 
-        if sex and name_and_schoolNum:
+        # if sex and name_and_schoolNum:
             #表示都获取成功了
-            with db.auto_commit():
-                success = Success()
-                success.portraitUri = "/static/portrait/" + str(req_arg['user_id']) + '.jpg'
-                success.info = 'name:'+name_and_schoolNum[1]+','+'school_numb:'+name_and_schoolNum[0]+','+\
-                'sex:'+ sex+','+'identity:1,'+'major:'+major+','+'class:'+clss+','+\
-                'grade:'+grade+',{{'+sex_html.text+'}}' #存储网页源码，方便以后分析
-                db.session.add(success)
-            result_dict = {
-                'user_id': req_arg['user_id'],
-                'status': 1,
-                'name': name_and_schoolNum[1],
-                'school_numb': name_and_schoolNum[0],
-                'sex': sex,
-                'identity':1,
-                'major':major,
-                'class':clss,
-                'grade':grade
-            }
-            # 重命名用户认证用的二维码
-            rename_code(req_arg['verification_code'], req_arg['user_id'])
+    with db.auto_commit():
+        success = Success()
+        success.portraitUri = "/static/portrait/" + str(req_arg['user_id']) + '.jpg'
+        success.info = 'name:'+name_and_schoolNum[1]+','+'school_numb:'+name_and_schoolNum[0]+','+\
+        'sex:'+ sex+','+'identity:1,'+'major:'+major+','+'class:'+clss+','+\
+        'grade:'+grade+',{{'+sex_html.text+'}}' #存储网页源码，方便以后分析
+        db.session.add(success)
 
-        else:
-            result_dict={
-                'error': 'fail to get sex and name'
-            }
-    except Exception as e:
-        result_dict=benke_get(req_arg)
-        result_dict['status']=0
+    result_dict = {
+        'user_id': req_arg['user_id'],
+        'status': 1,
+        'name': name_and_schoolNum[1],
+        'school_numb': name_and_schoolNum[0],
+        'sex': sex,
+        'identity':1,
+        'major':major,
+        'class':clss,
+        'grade':grade
+    }
+    # 重命名用户认证用的二维码
+    rename_code(req_arg['verification_code'], req_arg['user_id'])
+
+# else:
+#     result_dict={
+#         'error': 'fail to get sex and name'
+#     }
+    # except Exception as e:
+    #     result_dict=benke_get(req_arg)
+    #     result_dict['status']=0
         # 认证失败逻辑需要再写一下,再次去获取验证码
 
 
@@ -304,6 +305,15 @@ def certif():
             certif_res = {**master_certif(req_args),**certif_res}
     else:
         abort(400)
+
+    # 预计是账号密码错误，进行补救
+    if certif_res.get('status') == 0:
+        if int(req_args.get('identity', 1)) == BENKE:
+            certif_res = benke_get(req_args)
+        elif int(req_args.get('identity')) == MASTER:
+            certif_res = master_get(req_args)
+        certif_res['status'] = 0
+
     return jsonify(certif_res)
 
 
@@ -323,6 +333,7 @@ def get():
             result_dict = {**master_get(req_args),**result_dict}
     else:
         abort(400)
+
     return jsonify(result_dict)
 
 
